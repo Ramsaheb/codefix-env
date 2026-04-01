@@ -1,10 +1,10 @@
-def compute_reward(old_code, new_code):
-    reward = 0.0
+def compute_reward(previous_score: float, current_score: float) -> float:
+    delta = round(current_score - previous_score, 3)
 
-    if "SyntaxError" not in new_code:
-        reward += 0.3
+    if delta > 0:
+        return delta
 
-    if "a+b" in new_code:
-        reward += 0.7
+    if delta < 0:
+        return -0.2
 
-    return min(reward, 1.0)
+    return -0.01
