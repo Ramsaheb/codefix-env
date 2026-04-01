@@ -36,8 +36,15 @@ class CodeFixEnv:
             new_code = old_code
             action_error = str(exc)
 
+        change = diff_summary(old_code, new_code)
         new_score, grade_error = grade_code(self.state.task_name, new_code)
-        reward = compute_reward(self.state.last_score, new_score)
+        reward = compute_reward(
+            previous_score=self.state.last_score,
+            current_score=new_score,
+            changed_lines=int(change["changed_lines"]),
+            action_error=action_error,
+            grade_error=grade_error,
+        )
 
         self.state.code = new_code
         self.state.step_count += 1
@@ -46,7 +53,6 @@ class CodeFixEnv:
         self.state.error = action_error or grade_error
 
         done = new_score >= 1.0 or self.state.step_count >= self.state.max_steps
-        change = diff_summary(old_code, new_code)
 
         log(
             f"task={self.state.task_name} step={self.state.step_count} "
@@ -56,6 +62,8 @@ class CodeFixEnv:
         info = {
             "score": new_score,
             "changed_lines": change["changed_lines"],
+            "action_error": action_error,
+            "grade_error": grade_error,
         }
 
         return self._get_obs(), reward, done, info

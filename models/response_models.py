@@ -13,10 +13,12 @@ class Observation(BaseModel):
 
 
 class ResetResponse(BaseModel):
+    session_id: str
     state: Observation
 
 
 class StepResponse(BaseModel):
+    session_id: str
     state: Observation
     reward: float
     done: bool
