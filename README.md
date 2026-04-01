@@ -334,6 +334,7 @@ python -m pytest -q
 python -m uvicorn app:app --host 127.0.0.1 --port 7860
 python inference.py
 python benchmark.py
+python predeploy_check.py
 openenv validate
 ```
 
