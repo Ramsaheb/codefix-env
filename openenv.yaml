@@ -1,0 +1,8 @@
+name: CodeFixEnv
+description: Code debugging RL environment
+entry_point: app:app
+
+tasks:
+  - easy
+  - medium
+  - hard
