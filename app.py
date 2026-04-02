@@ -39,6 +39,16 @@ def health():
     }
 
 
+@app.get("/")
+def root():
+    return {
+        "message": "CodeFixEnv API is running.",
+        "docs": "/docs",
+        "health": "/health",
+        "ready": "/ready",
+    }
+
+
 @app.get("/ready")
 def ready():
     return {
