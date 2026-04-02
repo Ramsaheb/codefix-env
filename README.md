@@ -1,3 +1,13 @@
+---
+title: CodeFixEnv
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_file: app.py
+pinned: false
+---
+
 # CodeFixEnv - Round 1 Execution Guide (Start to Submission)
 
 ## Purpose of This Document
