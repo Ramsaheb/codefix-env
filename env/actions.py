@@ -20,13 +20,39 @@ def parse_action(raw_action: str) -> Tuple[str, Dict[str, object]]:
 			raise ValueError("replace_line format must be: replace_line:<line_no>:<new_code>")
 
 		line_no = _parse_line_no(parts[1], command_name="replace_line")
-		return "replace_line", {"line_no": line_no, "new_code": parts[2]}
+		return "replace_line", {"line_no": line_no, "new_code": _decode_payload_text(parts[2])}
+
+	if normalized.startswith("insert_line:"):
+		parts = action.split(":", 2)
+		if len(parts) != 3:
+			raise ValueError("insert_line format must be: insert_line:<line_no>:<new_code>")
+
+		line_no = _parse_line_no(parts[1], command_name="insert_line")
+		return "insert_line", {"line_no": line_no, "new_code": _decode_payload_text(parts[2])}
+
+	if normalized.startswith("replace_range:"):
+		parts = action.split(":", 3)
+		if len(parts) != 4:
+			raise ValueError(
+				"replace_range format must be: replace_range:<start_line>:<end_line>:<new_code>"
+			)
+
+		start_line = _parse_line_no(parts[1], command_name="replace_range")
+		end_line = _parse_line_no(parts[2], command_name="replace_range")
+		if end_line < start_line:
+			raise ValueError("replace_range end_line must be >= start_line.")
+
+		return "replace_range", {
+			"start_line": start_line,
+			"end_line": end_line,
+			"new_code": _decode_payload_text(parts[3]),
+		}
 
 	if normalized.startswith("append_line:"):
 		parts = action.split(":", 1)
 		if len(parts) != 2:
 			raise ValueError("append_line format must be: append_line:<new_code>")
-		return "append_line", {"new_code": parts[1]}
+		return "append_line", {"new_code": _decode_payload_text(parts[1])}
 
 	if normalized.startswith("delete_line:"):
 		parts = action.split(":", 1)
@@ -43,11 +69,22 @@ def parse_action(raw_action: str) -> Tuple[str, Dict[str, object]]:
 				"replace_text format must be: replace_text:<old_text>:<new_text>"
 			)
 
-		old_text = parts[1]
+		old_text = _decode_payload_text(parts[1])
 		if not old_text:
 			raise ValueError("replace_text old_text must be non-empty.")
 
-		return "replace_text", {"old_text": old_text, "new_text": parts[2]}
+		return "replace_text", {"old_text": old_text, "new_text": _decode_payload_text(parts[2])}
+
+	if normalized.startswith("rewrite_code:"):
+		parts = action.split(":", 1)
+		if len(parts) != 2:
+			raise ValueError("rewrite_code format must be: rewrite_code:<new_code>")
+
+		new_code = _decode_payload_text(parts[1])
+		if not new_code.strip():
+			raise ValueError("rewrite_code new_code must be non-empty.")
+
+		return "rewrite_code", {"new_code": new_code}
 
 	raise ValueError(f"Unsupported action '{action}'.")
 
@@ -62,3 +99,7 @@ def _parse_line_no(raw_line_no: str, command_name: str) -> int:
 		raise ValueError(f"{command_name} line_no must be >= 1.")
 
 	return line_no
+
+
+def _decode_payload_text(value: str) -> str:
+	return value.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")

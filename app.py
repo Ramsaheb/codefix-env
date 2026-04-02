@@ -1,6 +1,7 @@
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException, Response, status
+from fastapi import Body, FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from env.session_manager import SessionManager, SessionNotFoundError
 from models.request_models import ResetRequest, StepRequest
@@ -21,6 +22,12 @@ session_manager = SessionManager(
     max_sessions=settings.max_sessions,
     session_ttl_seconds=settings.session_ttl_seconds,
 )
+
+
+@app.exception_handler(Exception)
+def handle_unexpected_exception(request: Request, exc: Exception):
+    log(f"Unhandled server error on {request.url.path}: {exc.__class__.__name__}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.get("/health")

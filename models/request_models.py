@@ -28,6 +28,6 @@ class StepRequest(BaseModel):
     action: str = Field(
         ...,
         min_length=1,
-        max_length=4096,
-        description="Action to apply to current code state",
+        max_length=50000,
+        description="Action or code-edit command to apply to current state",
     )

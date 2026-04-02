@@ -41,6 +41,59 @@ def test_apply_action_supports_new_text_operations():
     assert deleted.startswith("y = x - 1")
 
 
+def test_parse_action_supports_advanced_multiline_edits():
+    action, payload = parse_action("insert_line:2:return a + b")
+    assert action == "insert_line"
+    assert payload["line_no"] == 2
+    assert payload["new_code"] == "return a + b"
+
+    action, payload = parse_action("replace_range:2:3:return a + b\\nprint(a)")
+    assert action == "replace_range"
+    assert payload["start_line"] == 2
+    assert payload["end_line"] == 3
+    assert payload["new_code"] == "return a + b\nprint(a)"
+
+    action, payload = parse_action("rewrite_code:def add(a, b):\\n    return a + b")
+    assert action == "rewrite_code"
+    assert "return a + b" in payload["new_code"]
+
+
+def test_apply_action_supports_insert_replace_range_and_rewrite_code():
+    code = "def add(a, b):\n    total = a - b\n    return total\n"
+
+    inserted = apply_action(code, "insert_line:2:# robust fix below")
+    assert inserted.splitlines()[1] == "# robust fix below"
+
+    replaced = apply_action(
+        code,
+        "replace_range:2:3:    total = a + b\\n    return total",
+    )
+    assert "total = a + b" in replaced
+    assert "return total" in replaced
+
+    rewritten = apply_action(
+        code,
+        "rewrite_code:def add(a, b):\\n    return a + b",
+    )
+    assert rewritten == "def add(a, b):\n    return a + b"
+
+
+def test_fix_logic_handles_additive_intent_functions_with_complex_body():
+    code = (
+        "def synthesize(a, b, c):\n"
+        "    result = a - b\n"
+        "    if result > 0:\n"
+        "        return result - c\n"
+        "    return b - a\n"
+    )
+
+    updated = apply_action(code, "fix_logic")
+
+    assert "result = a + b" in updated
+    assert "return result + c" in updated
+    assert "return b + a" in updated
+
+
 def test_compute_reward_adds_bonus_on_improvement():
     reward = compute_reward(
         previous_score=0.3,

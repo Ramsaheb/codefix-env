@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from graders.testcases import get_testcases
+from graders.testcases import TEST_CASES, get_testcases
 from utils.code_executor import (
     ExecutionLimitExceeded,
     compile_code,
@@ -10,6 +10,9 @@ from utils.code_executor import (
 
 
 def grade_code(task_name: str, code: str) -> Tuple[float, str]:
+    if task_name not in TEST_CASES:
+        return 0.0, f"Unknown task '{task_name}'."
+
     syntax_ok, syntax_error = compile_code(code)
     if not syntax_ok:
         return 0.0, syntax_error

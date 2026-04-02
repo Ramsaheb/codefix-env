@@ -20,12 +20,14 @@ MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
 SYSTEM_PROMPT = (
     "You are a deterministic code-fixing policy. Return exactly one action and nothing else. "
     "Allowed actions: fix_syntax, fix_logic, noop, replace_line:<line_no>:<new_code>, "
-    "append_line:<new_code>, delete_line:<line_no>, replace_text:<old_text>:<new_text>."
+    "insert_line:<line_no>:<new_code>, replace_range:<start_line>:<end_line>:<new_code>, "
+    "append_line:<new_code>, delete_line:<line_no>, replace_text:<old_text>:<new_text>, "
+    "rewrite_code:<new_code>."
 )
 
 
 VALID_ACTION_PATTERN = re.compile(
-    r"^(fix_syntax|fix_logic|noop|replace_line:[^:\n]+:.+|append_line:.+|delete_line:[^:\n]+|replace_text:[^:\n]+:.+)$"
+    r"^(fix_syntax|fix_logic|noop|replace_line:[^:\n]+:.+|insert_line:[^:\n]+:.+|replace_range:[^:\n]+:[^:\n]+:[\s\S]*|append_line:.+|delete_line:[^:\n]+|replace_text:[^:\n]+:.+|rewrite_code:[\s\S]+)$"
 )
 
 
@@ -62,6 +64,18 @@ def _normalize_action(raw_action: str) -> str:
     return "noop"
 
 
+def _has_explicit_noop(raw_action: str) -> bool:
+    action = raw_action.strip().strip("`")
+    if action == "noop":
+        return True
+
+    for line in raw_action.splitlines():
+        if line.strip().strip("`") == "noop":
+            return True
+
+    return False
+
+
 def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
     prompt = (
         f"Task: {state.get('task', '')}\n"
@@ -85,7 +99,10 @@ def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
 
         content = completion.choices[0].message.content or ""
         action = _normalize_action(content)
-        if action != "noop" or "noop" in content:
+        if action != "noop":
+            return action
+
+        if _has_explicit_noop(content):
             return action
 
     return "noop"

@@ -132,9 +132,14 @@ Supported actions:
 - fix_logic
 - noop
 - replace_line:<line_no>:<new_code>
+- insert_line:<line_no>:<new_code>
+- replace_range:<start_line>:<end_line>:<new_code>
 - append_line:<new_code>
 - delete_line:<line_no>
 - replace_text:<old_text>:<new_text>
+- rewrite_code:<new_code>
+
+For multiline payloads in action strings, use escaped newlines like \n.
 
 Reward must:
 - support partial progress
