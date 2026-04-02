@@ -26,7 +26,6 @@ pip-wheel-metadata/
 # Do not add "env/" here.
 .venv/
 venv/
-ENV/
 env.bak/
 venv.bak/
 
