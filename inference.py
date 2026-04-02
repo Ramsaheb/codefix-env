@@ -1,7 +1,7 @@
 import os
 import re
 import time
-from typing import Dict
+from typing import Dict, Optional
 
 from openai import OpenAI
 import requests
@@ -12,10 +12,13 @@ MODEL_NAME = os.getenv("MODEL_NAME", "demo-rule-agent")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 TASK_NAME = os.getenv("TASK_NAME", "easy")
+BENCHMARK = os.getenv("BENCHMARK", "codefix-env")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
 USE_LLM_POLICY = os.getenv("USE_LLM_POLICY", "true").strip().lower() in {"1", "true", "yes"}
 MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "1.0"))
 
 SYSTEM_PROMPT = (
     "You are a deterministic code-fixing policy. Return exactly one action and nothing else. "
@@ -76,6 +79,31 @@ def _has_explicit_noop(raw_action: str) -> bool:
     return False
 
 
+def _safe_field(value: object) -> str:
+    return str(value).replace("\r", "\\r").replace("\n", "\\n")
+
+
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    done_text = str(done).lower()
+    error_text = "null" if not error else _safe_field(error)
+    print(
+        f"[STEP] step={step} action={_safe_field(action)} reward={reward:.2f} done={done_text} error={error_text}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, rewards: list[float]) -> None:
+    rewards_text = ",".join(f"{reward:.2f}" for reward in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_text}",
+        flush=True,
+    )
+
+
 def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
     prompt = (
         f"Task: {state.get('task', '')}\n"
@@ -116,54 +144,69 @@ def main() -> None:
     client = None
     if USE_LLM_POLICY and HF_TOKEN:
         client = OpenAI(api_key=HF_TOKEN, base_url=LLM_BASE_URL)
-        print(f"Using OpenAI-compatible policy with model: {MODEL_NAME} @ {LLM_BASE_URL}")
-    else:
-        print("HF_TOKEN missing or LLM policy disabled; using deterministic fallback policy")
+    rewards: list[float] = []
+    steps_taken = 0
+    success = False
 
-    print(f"Starting inference against API: {API_BASE_URL} task={TASK_NAME} max_steps={MAX_STEPS}")
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-    reset_resp = requests.post(
-        f"{API_BASE_URL}/reset",
-        json={"task": TASK_NAME},
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
-    )
-    reset_resp.raise_for_status()
-
-    reset_payload = reset_resp.json()
-    session_id = reset_payload["session_id"]
-    state = reset_payload["state"]
-    done = False
-    step = 0
-
-    while not done and step < MAX_STEPS:
-        if client is not None:
-            try:
-                action = choose_action_with_openai(client, state)
-            except Exception:
-                action = choose_action(state)
-        else:
-            action = choose_action(state)
-
-        step_resp = requests.post(
-            f"{API_BASE_URL}/step",
-            json={"session_id": session_id, "action": action},
+    try:
+        reset_resp = requests.post(
+            f"{API_BASE_URL}/reset",
+            json={"task": TASK_NAME},
             headers=headers,
             timeout=REQUEST_TIMEOUT,
         )
-        step_resp.raise_for_status()
+        reset_resp.raise_for_status()
 
-        payload = step_resp.json()
-        state = payload["state"]
-        done = bool(payload["done"])
-        step += 1
+        reset_payload = reset_resp.json()
+        session_id = reset_payload["session_id"]
+        state = reset_payload["state"]
+        done = False
+        score = float(state.get("score", 0.0))
 
-        print(
-            f"step={step} action={action} reward={payload['reward']} "
-            f"score={payload['score']} done={done}"
-        )
+        while not done and steps_taken < MAX_STEPS:
+            if client is not None:
+                try:
+                    action = choose_action_with_openai(client, state)
+                except Exception:
+                    action = choose_action(state)
+            else:
+                action = choose_action(state)
 
-        time.sleep(0.1)
+            step_resp = requests.post(
+                f"{API_BASE_URL}/step",
+                json={"session_id": session_id, "action": action},
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            step_resp.raise_for_status()
+
+            payload = step_resp.json()
+            state = payload["state"]
+            done = bool(payload["done"])
+            reward = float(payload.get("reward", 0.0))
+            score = float(payload.get("score", score))
+            steps_taken += 1
+            rewards.append(reward)
+
+            error_text = state.get("error")
+            log_step(
+                step=steps_taken,
+                action=action,
+                reward=reward,
+                done=done,
+                error=str(error_text) if error_text else None,
+            )
+
+            time.sleep(0.1)
+
+        success = bool(done and score >= SUCCESS_SCORE_THRESHOLD)
+    except Exception:
+        success = False
+        raise
+    finally:
+        log_end(success=success, steps=steps_taken, rewards=rewards)
 
 
 if __name__ == "__main__":

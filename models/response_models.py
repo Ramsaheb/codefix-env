@@ -17,6 +17,11 @@ class ResetResponse(BaseModel):
     state: Observation
 
 
+class StateResponse(BaseModel):
+    session_id: str
+    state: Observation
+
+
 class StepResponse(BaseModel):
     session_id: str
     state: Observation

@@ -228,3 +228,62 @@ def test_main_falls_back_when_llm_policy_raises(monkeypatch):
     inference.main()
 
     assert fallback_calls["count"] == 1
+
+
+def test_main_emits_hackathon_stdout_format(monkeypatch, capsys):
+    monkeypatch.setattr(inference, "API_BASE_URL", "http://fake-api")
+    monkeypatch.setattr(inference, "TASK_NAME", "easy")
+    monkeypatch.setattr(inference, "BENCHMARK", "codefix-env")
+    monkeypatch.setattr(inference, "MODEL_NAME", "demo-model")
+    monkeypatch.setattr(inference, "REQUEST_TIMEOUT", 3)
+    monkeypatch.setattr(inference, "MAX_STEPS", 3)
+    monkeypatch.setattr(inference, "USE_LLM_POLICY", False)
+    monkeypatch.setattr(inference, "HF_TOKEN", "")
+    monkeypatch.setattr(inference, "SUCCESS_SCORE_THRESHOLD", 1.0)
+    monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(inference, "choose_action", lambda _state: "fix_syntax")
+
+    def fake_post(url, json, headers, timeout):
+        if url.endswith("/reset"):
+            return FakeResponse(
+                {
+                    "session_id": "sid-logs",
+                    "state": {
+                        "task": "easy",
+                        "code": 'print("Hello',
+                        "error": "SyntaxError",
+                        "step_count": 0,
+                        "history": [],
+                        "score": 0.0,
+                    },
+                }
+            )
+
+        if url.endswith("/step"):
+            return FakeResponse(
+                {
+                    "state": {
+                        "task": "easy",
+                        "code": "print(\"Hello\")",
+                        "error": "",
+                        "step_count": 1,
+                        "history": ["fix_syntax"],
+                        "score": 1.0,
+                    },
+                    "done": True,
+                    "reward": 1.0,
+                    "score": 1.0,
+                }
+            )
+
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(inference.requests, "post", fake_post)
+
+    inference.main()
+
+    output_lines = [line.strip() for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert len(output_lines) == 3
+    assert output_lines[0].startswith("[START] task=easy env=codefix-env model=demo-model")
+    assert output_lines[1].startswith("[STEP] step=1 action=fix_syntax reward=1.00 done=true error=null")
+    assert output_lines[2].startswith("[END] success=true steps=1 rewards=1.00")

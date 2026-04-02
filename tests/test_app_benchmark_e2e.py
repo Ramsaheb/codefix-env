@@ -68,6 +68,23 @@ def test_api_delete_unknown_session_returns_404():
     assert response.status_code == 404
 
 
+def test_api_state_endpoint_returns_current_state_and_404_for_missing():
+    client = TestClient(app)
+
+    reset_response = client.post("/reset", json={"task": "easy"})
+    assert reset_response.status_code == 200
+    session_id = reset_response.json()["session_id"]
+
+    state_response = client.get(f"/state/{session_id}")
+    assert state_response.status_code == 200
+    payload = state_response.json()
+    assert payload["session_id"] == session_id
+    assert payload["state"]["task"] == "easy"
+
+    missing = client.get("/state/missing-session")
+    assert missing.status_code == 404
+
+
 def test_api_returns_json_on_unexpected_exception(monkeypatch):
     client = TestClient(app, raise_server_exceptions=False)
 

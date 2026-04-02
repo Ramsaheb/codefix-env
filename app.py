@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from env.session_manager import SessionManager, SessionNotFoundError
 from models.request_models import ResetRequest, StepRequest
-from models.response_models import ResetResponse, StepResponse
+from models.response_models import ResetResponse, StateResponse, StepResponse
 from settings import load_settings
 from tasks.task_loader import available_tasks
 from utils.logger import configure_logging, log
@@ -86,6 +86,22 @@ def step(req: StepRequest):
         "done": done,
         "score": info.get("score", 0.0),
     }
+
+
+@app.get("/state/{session_id}", response_model=StateResponse)
+def state(session_id: str):
+    try:
+        obs = session_manager.state(session_id)
+    except SessionNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Session not found. Call /reset first, or pass an existing session_id in /reset "
+                "to resume an episode."
+            ),
+        ) from exc
+
+    return {"session_id": session_id, "state": obs}
 
 
 @app.delete("/session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

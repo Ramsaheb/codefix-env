@@ -204,6 +204,7 @@ Implemented in:
 ### Required endpoints
 - POST /reset
 - POST /step
+- GET /state/{session_id}
 
 ### Additional operational endpoints
 - GET /health
@@ -332,6 +333,19 @@ Run these checks before submission:
 3. Docker build and container run
 4. OpenEnv validation command
 5. Hosted Space endpoint checks
+
+Official-style validator script is included at scripts/validate-submission.sh.
+
+Recommended validator run:
+```bash
+chmod +x scripts/validate-submission.sh
+./scripts/validate-submission.sh https://your-space.hf.space .
+```
+
+If openenv is missing locally:
+```bash
+pip install openenv-core
+```
 
 Example local commands:
 ```bash
