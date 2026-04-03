@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -28,3 +28,19 @@ class StepResponse(BaseModel):
     reward: float
     done: bool
     score: float
+
+
+class SchemaResponse(BaseModel):
+    action: Dict[str, Any]
+    observation: Dict[str, Any]
+    state: Dict[str, Any]
+
+
+class MetadataResponse(BaseModel):
+    name: str
+    description: str
+    version: str
+    author: str
+    documentation_url: str
+    readme_content: Optional[str] = None
+    tasks: List[str]

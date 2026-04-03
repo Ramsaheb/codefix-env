@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from env.session_manager import SessionManager, SessionNotFoundError
 from models.request_models import ResetRequest, StepRequest
-from models.response_models import ResetResponse, StateResponse, StepResponse
+from models.response_models import MetadataResponse, Observation, ResetResponse, SchemaResponse, StateResponse, StepResponse
 from settings import load_settings
 from tasks.task_loader import available_tasks
 from utils.logger import configure_logging, log
@@ -46,6 +46,8 @@ def root():
         "docs": "/docs",
         "health": "/health",
         "ready": "/ready",
+        "schema": "/schema",
+        "metadata": "/metadata",
     }
 
 
@@ -56,6 +58,42 @@ def ready():
         "default_task": settings.default_task,
         "tasks": available_tasks(),
         **session_manager.stats(),
+    }
+
+
+@app.get("/schema", response_model=SchemaResponse)
+def schema():
+    # /step accepts a string action, while observation/state expose the same state structure.
+    return {
+        "action": {
+            "title": "CodeFixAction",
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["action"],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action or code-edit command to apply to current state",
+                    "minLength": 1,
+                    "maxLength": 50000,
+                }
+            },
+        },
+        "observation": Observation.model_json_schema(),
+        "state": Observation.model_json_schema(),
+    }
+
+
+@app.get("/metadata", response_model=MetadataResponse)
+def metadata():
+    return {
+        "name": settings.app_name,
+        "description": "Code debugging RL environment",
+        "version": settings.app_version,
+        "author": "CodeFixEnv Team",
+        "documentation_url": "/docs",
+        "readme_content": None,
+        "tasks": available_tasks(),
     }
 
 

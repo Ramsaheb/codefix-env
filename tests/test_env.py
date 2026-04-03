@@ -43,6 +43,24 @@ def test_health_and_ready_endpoints():
 	assert "active_sessions" in payload
 
 
+def test_schema_and_metadata_endpoints():
+	client = TestClient(app)
+
+	schema_response = client.get("/schema")
+	assert schema_response.status_code == 200
+	schema_payload = schema_response.json()
+	assert set(schema_payload.keys()) == {"action", "observation", "state"}
+	assert schema_payload["action"]["type"] == "object"
+	assert schema_payload["action"]["required"] == ["action"]
+
+	metadata_response = client.get("/metadata")
+	assert metadata_response.status_code == 200
+	metadata_payload = metadata_response.json()
+	assert metadata_payload["name"] == "CodeFixEnv"
+	assert metadata_payload["documentation_url"] == "/docs"
+	assert {"easy", "medium", "hard", "expert", "nightmare"}.issubset(set(metadata_payload["tasks"]))
+
+
 def test_api_reset_and_step_flow():
 	client = TestClient(app)
 
