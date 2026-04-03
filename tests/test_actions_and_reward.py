@@ -1,7 +1,10 @@
+"""Tests for action parsing, code transformation, and reward computation."""
+
 from env.actions import parse_action
-from env.environment import CodeFixEnv
+from env.environment import CodeFixEnvironment
 from env.logic import apply_action
 from env.reward import compute_reward
+from models import CodeFixAction
 
 
 def test_parse_action_supports_append_delete_and_replace_text():
@@ -24,7 +27,6 @@ def test_parse_action_rejects_invalid_delete_line_value():
         parse_action("delete_line:abc")
     except ValueError:
         return
-
     assert False, "Expected ValueError for invalid delete_line input"
 
 
@@ -63,11 +65,9 @@ def test_compute_reward_penalizes_no_change_invalid_action():
     assert reward == -0.11
 
 
-def test_environment_exposes_action_error_in_step_info():
-    demo_env = CodeFixEnv()
-    demo_env.reset("easy")
-
-    _obs, reward, _done, info = demo_env.step("unknown_action")
-
-    assert info["action_error"]
-    assert reward <= -0.1
+def test_environment_exposes_action_error_in_metadata():
+    env = CodeFixEnvironment()
+    env.reset(task="easy")
+    obs = env.step(CodeFixAction(action="unknown_action"))
+    assert obs.metadata.get("action_error")
+    assert float(obs.reward) <= -0.1

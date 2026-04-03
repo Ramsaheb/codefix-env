@@ -1,3 +1,10 @@
+"""
+Pre-deploy validation script.
+
+Runs unit tests, benchmark, Docker build/run, API smoke checks,
+and inference smoke against a local container.
+"""
+
 import os
 import shutil
 import subprocess
@@ -6,7 +13,6 @@ import time
 from pathlib import Path
 
 import requests
-
 
 ROOT = Path(__file__).resolve().parent
 PYTHON = sys.executable
@@ -21,82 +27,87 @@ class StepFailed(RuntimeError):
     pass
 
 
-def run_command(title: str, command: list[str], env: dict | None = None, required: bool = True) -> int:
+def run_command(
+    title: str,
+    command: list[str],
+    env: dict | None = None,
+    required: bool = True,
+) -> int:
     print(f"\n==> {title}")
     print("$", " ".join(command))
-
     process = subprocess.run(command, cwd=ROOT, env=env, check=False)
     if required and process.returncode != 0:
         raise StepFailed(f"{title} failed with exit code {process.returncode}")
-
     return process.returncode
 
 
-def wait_for_health(timeout_seconds: int = 45) -> None:
+def wait_for_health(timeout_seconds: int = 60) -> None:
     print(f"\n==> Waiting for container health at {BASE_URL}/health")
     start = time.time()
-
     while time.time() - start <= timeout_seconds:
         try:
-            response = requests.get(f"{BASE_URL}/health", timeout=3)
-            if response.status_code == 200:
+            resp = requests.get(f"{BASE_URL}/health", timeout=3)
+            if resp.status_code == 200:
                 print("Health endpoint is ready")
                 return
         except requests.RequestException:
             pass
-
         time.sleep(1)
-
     raise StepFailed("Container health check timed out")
 
 
 def run_api_smoke_checks() -> None:
     print("\n==> API smoke checks")
 
-    ready_response = requests.get(f"{BASE_URL}/ready", timeout=10)
-    if ready_response.status_code != 200:
-        raise StepFailed(f"/ready failed with {ready_response.status_code}")
+    # Schema endpoint
+    schema_resp = requests.get(f"{BASE_URL}/schema", timeout=10)
+    if schema_resp.status_code != 200:
+        raise StepFailed(f"/schema failed with {schema_resp.status_code}")
+    schema = schema_resp.json()
+    if "action" not in schema or "observation" not in schema:
+        raise StepFailed("/schema missing action or observation keys")
 
-    payload = ready_response.json()
-    tasks = set(payload.get("tasks", []))
-    required_tasks = {"easy", "medium", "hard", "expert", "nightmare"}
-    if not required_tasks.issubset(tasks):
-        raise StepFailed(f"/ready missing tasks. expected={sorted(required_tasks)} got={sorted(tasks)}")
+    # Reset
+    reset_resp = requests.post(
+        f"{BASE_URL}/reset", json={"task": "easy"}, timeout=10
+    )
+    if reset_resp.status_code != 200:
+        raise StepFailed(f"/reset failed with {reset_resp.status_code}")
+    reset_data = reset_resp.json()
+    if "observation" not in reset_data:
+        raise StepFailed("/reset response missing 'observation'")
 
-    easy_reset = requests.post(f"{BASE_URL}/reset", json={"task": "easy"}, timeout=10)
-    if easy_reset.status_code != 200:
-        raise StepFailed(f"easy /reset failed with {easy_reset.status_code}")
-
-    easy_session = easy_reset.json().get("session_id", "")
-    easy_step = requests.post(
+    # Step
+    step_resp = requests.post(
         f"{BASE_URL}/step",
-        json={"session_id": easy_session, "action": "fix_syntax"},
+        json={"action": {"action": "fix_syntax"}},
         timeout=10,
     )
-    if easy_step.status_code != 200:
-        raise StepFailed(f"easy /step failed with {easy_step.status_code}")
+    if step_resp.status_code != 200:
+        raise StepFailed(f"/step failed with {step_resp.status_code}")
+    step_data = step_resp.json()
+    if "observation" not in step_data or "done" not in step_data:
+        raise StepFailed("/step response missing required keys")
 
-    nightmare_reset = requests.post(f"{BASE_URL}/reset", json={"task": "nightmare"}, timeout=10)
-    if nightmare_reset.status_code != 200:
-        raise StepFailed(f"nightmare /reset failed with {nightmare_reset.status_code}")
+    # Nightmare multi-step
+    reset2 = requests.post(
+        f"{BASE_URL}/reset", json={"task": "nightmare"}, timeout=10
+    )
+    if reset2.status_code != 200:
+        raise StepFailed(f"nightmare /reset failed with {reset2.status_code}")
 
-    nightmare_session = nightmare_reset.json().get("session_id", "")
-    first = requests.post(
+    s1 = requests.post(
         f"{BASE_URL}/step",
-        json={"session_id": nightmare_session, "action": "fix_syntax"},
+        json={"action": {"action": "fix_syntax"}},
         timeout=10,
     )
-    second = requests.post(
+    s2 = requests.post(
         f"{BASE_URL}/step",
-        json={"session_id": nightmare_session, "action": "fix_logic"},
+        json={"action": {"action": "fix_logic"}},
         timeout=10,
     )
-
-    if first.status_code != 200 or second.status_code != 200:
-        raise StepFailed("nightmare flow /step checks failed")
-
-    if not second.json().get("done", False):
-        raise StepFailed("nightmare flow did not converge as expected")
+    if s1.status_code != 200 or s2.status_code != 200:
+        raise StepFailed("nightmare /step checks failed")
 
     print("API smoke checks passed")
 
@@ -107,6 +118,7 @@ def run_inference_smoke() -> None:
     env["API_BASE_URL"] = BASE_URL
     env["USE_LLM_POLICY"] = "false"
     env["HF_TOKEN"] = ""
+    env["OPENAI_API_KEY"] = ""
     run_command("inference.py smoke", [PYTHON, "inference.py"], env=env, required=True)
 
 
@@ -117,31 +129,27 @@ def main() -> int:
 
     container_started = False
     try:
-        run_command("Unit and API tests", [PYTHON, "-m", "pytest", "-q"]) 
+        run_command("Unit tests", [PYTHON, "-m", "pytest", "-q"])
         run_command("Benchmark", [PYTHON, "benchmark.py"])
-
-        run_command("Remove existing predeploy container (if any)", ["docker", "rm", "-f", CONTAINER], required=False)
+        run_command(
+            "Remove existing container",
+            ["docker", "rm", "-f", CONTAINER],
+            required=False,
+        )
         run_command("Docker build", ["docker", "build", "-t", IMAGE, "."])
         run_command(
             "Start container",
             [
-                "docker",
-                "run",
-                "--rm",
-                "-d",
-                "-p",
-                f"{PORT}:7860",
-                "--name",
-                CONTAINER,
+                "docker", "run", "--rm", "-d",
+                "-p", f"{PORT}:7860",
+                "--name", CONTAINER,
                 IMAGE,
             ],
         )
         container_started = True
-
         wait_for_health()
         run_api_smoke_checks()
         run_inference_smoke()
-
         print("\nAll predeploy checks passed")
         return 0
     except StepFailed as exc:

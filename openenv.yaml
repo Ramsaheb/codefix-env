@@ -1,6 +1,13 @@
-name: CodeFixEnv
-description: Code debugging RL environment
-entry_point: app:app
+spec_version: 1
+name: codefix_env
+version: "1.0.0"
+description: "Code debugging RL environment for evaluating AI debugging agents"
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+action: CodeFixAction
+observation: CodeFixObservation
 
 tasks:
   - easy

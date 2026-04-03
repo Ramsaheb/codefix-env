@@ -1,8 +1,9 @@
-fastapi==0.115.12
-uvicorn[standard]==0.34.0
-pydantic==2.11.3
-requests==2.32.3
-openai==1.75.0
-gunicorn==23.0.0
-httpx==0.28.1
-pytest==8.3.5
+openenv-core>=0.2.3
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.11.0
+requests>=2.32.0
+openai>=1.75.0
+gunicorn>=23.0.0
+httpx>=0.28.0
+pytest>=8.3.0

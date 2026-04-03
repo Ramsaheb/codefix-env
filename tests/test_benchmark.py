@@ -1,17 +1,19 @@
+"""Benchmark integration tests."""
+
 from benchmark import compute_submission_readiness, run_benchmark
 
 
 def test_benchmark_runs_all_registered_tasks():
     results, readiness = run_benchmark()
 
-    task_names = {result.task for result in results}
+    task_names = {r.task for r in results}
     assert {"easy", "medium", "hard", "expert", "nightmare"}.issubset(task_names)
     assert 0.0 <= readiness <= 100.0
 
 
 def test_readiness_formula_is_bounded():
     class DummyResult:
-        def __init__(self, score: float, solved: bool, steps: int, max_steps: int):
+        def __init__(self, score, solved, steps, max_steps):
             self.score = score
             self.solved = solved
             self.steps = steps

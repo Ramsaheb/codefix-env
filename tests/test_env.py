@@ -1,132 +1,141 @@
+"""Tests for the CodeFixEnvironment and the OpenEnv HTTP API layer."""
+
 from fastapi.testclient import TestClient
 
 from app import app
-from env.environment import CodeFixEnv
+from env.environment import CodeFixEnvironment
+from models import CodeFixAction
 
 
-def test_environment_reset_contains_required_fields():
-	demo_env = CodeFixEnv()
-	state = demo_env.reset("easy")
+# ---------- direct environment tests ----------
 
-	assert state["task"] == "easy"
-	assert "code" in state
-	assert "error" in state
-	assert state["step_count"] == 0
-	assert state["history"] == []
+
+def test_environment_reset_returns_observation():
+    env = CodeFixEnvironment()
+    obs = env.reset(task="easy")
+
+    assert obs.task == "easy"
+    assert obs.code != ""
+    assert obs.step_count == 0
+    assert obs.history == []
+    assert obs.done is False
 
 
 def test_environment_step_records_history_and_score():
-	demo_env = CodeFixEnv()
-	demo_env.reset("medium")
-	obs, reward, done, info = demo_env.step("fix_logic")
+    env = CodeFixEnvironment()
+    env.reset(task="medium")
+    obs = env.step(CodeFixAction(action="fix_logic"))
 
-	assert obs["step_count"] == 1
-	assert obs["history"][-1] == "fix_logic"
-	assert isinstance(reward, float)
-	assert "score" in info
-	assert isinstance(done, bool)
-
-
-def test_health_and_ready_endpoints():
-	client = TestClient(app)
-
-	health_response = client.get("/health")
-	assert health_response.status_code == 200
-	assert health_response.json()["status"] == "ok"
-
-	ready_response = client.get("/ready")
-	assert ready_response.status_code == 200
-	payload = ready_response.json()
-	assert payload["status"] == "ready"
-	assert "tasks" in payload
-	assert {"easy", "medium", "hard", "expert", "nightmare"}.issubset(set(payload["tasks"]))
-	assert "active_sessions" in payload
+    assert obs.step_count == 1
+    assert obs.history[-1] == "fix_logic"
+    assert isinstance(obs.reward, (int, float))
+    assert isinstance(obs.done, bool)
 
 
-def test_api_reset_and_step_flow():
-	client = TestClient(app)
-
-	reset_response = client.post("/reset", json={"task": "easy"})
-	assert reset_response.status_code == 200
-	reset_payload = reset_response.json()
-	assert "session_id" in reset_payload
-
-	step_response = client.post(
-		"/step",
-		json={"session_id": reset_payload["session_id"], "action": "fix_syntax"},
-	)
-	assert step_response.status_code == 200
-
-	payload = step_response.json()
-	assert "session_id" in payload
-	assert "state" in payload
-	assert "reward" in payload
-	assert "done" in payload
+def test_environment_state_property():
+    env = CodeFixEnvironment()
+    env.reset(task="easy")
+    st = env.state
+    assert st.task_name == "easy"
+    assert st.step_count == 0
 
 
-def test_api_rejects_unknown_task():
-	client = TestClient(app)
-
-	response = client.post("/reset", json={"task": "unknown"})
-	assert response.status_code == 400
+# ---------- HTTP API tests ----------
 
 
-def test_api_rejects_unknown_session():
-	client = TestClient(app)
-
-	response = client.post("/step", json={"session_id": "missing-session", "action": "noop"})
-	assert response.status_code == 404
-
-
-def test_session_delete_flow():
-	client = TestClient(app)
-
-	reset_response = client.post("/reset", json={"task": "easy"})
-	assert reset_response.status_code == 200
-	session_id = reset_response.json()["session_id"]
-
-	delete_response = client.delete(f"/session/{session_id}")
-	assert delete_response.status_code == 204
-
-	step_response = client.post("/step", json={"session_id": session_id, "action": "noop"})
-	assert step_response.status_code == 404
+def test_health_endpoint():
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "healthy"
 
 
-def test_session_isolation_between_clients():
-	client = TestClient(app)
+def test_reset_and_step_flow():
+    client = TestClient(app)
 
-	reset_easy = client.post("/reset", json={"task": "easy"}).json()
-	reset_medium = client.post("/reset", json={"task": "medium"}).json()
+    # Reset
+    reset_resp = client.post("/reset", json={"task": "easy"})
+    assert reset_resp.status_code == 200
+    reset_data = reset_resp.json()
+    assert "observation" in reset_data
+    assert reset_data["done"] is False
 
-	sid_easy = reset_easy["session_id"]
-	sid_medium = reset_medium["session_id"]
-	assert sid_easy != sid_medium
-
-	step_easy = client.post("/step", json={"session_id": sid_easy, "action": "fix_syntax"})
-	step_medium = client.post("/step", json={"session_id": sid_medium, "action": "fix_logic"})
-
-	assert step_easy.status_code == 200
-	assert step_medium.status_code == 200
-
-	easy_task = step_easy.json()["state"]["task"]
-	medium_task = step_medium.json()["state"]["task"]
-	assert easy_task == "easy"
-	assert medium_task == "medium"
+    # Step
+    step_resp = client.post(
+        "/step",
+        json={"action": {"action": "fix_syntax"}},
+    )
+    assert step_resp.status_code == 200
+    step_data = step_resp.json()
+    assert "observation" in step_data
+    assert "reward" in step_data
+    assert "done" in step_data
 
 
-def test_hard_task_reaches_done_with_expected_action_sequence():
-	client = TestClient(app)
-	reset_payload = client.post("/reset", json={"task": "hard"}).json()
-	sid = reset_payload["session_id"]
+def test_reset_default_task():
+    """POST /reset with empty body should default (no crash)."""
+    client = TestClient(app)
+    resp = client.post("/reset", json={})
+    assert resp.status_code == 200
 
-	first = client.post("/step", json={"session_id": sid, "action": "fix_syntax"})
-	assert first.status_code == 200
-	first_payload = first.json()
-	assert first_payload["done"] is False
-	assert 0.3 <= first_payload["score"] < 1.0
 
-	second = client.post("/step", json={"session_id": sid, "action": "fix_logic"})
-	assert second.status_code == 200
-	second_payload = second.json()
-	assert second_payload["done"] is True
-	assert second_payload["score"] == 1.0
+def test_schema_endpoint():
+    client = TestClient(app)
+    resp = client.get("/schema")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "action" in data
+    assert "observation" in data
+
+
+# ---------- task-specific integration tests ----------
+
+
+def test_easy_task_solves_in_one_step():
+    env = CodeFixEnvironment()
+    env.reset(task="easy")
+    obs = env.step(CodeFixAction(action="fix_syntax"))
+    assert obs.done is True
+    assert obs.score >= 1.0
+
+
+def test_hard_task_needs_two_steps():
+    env = CodeFixEnvironment()
+    env.reset(task="hard")
+
+    obs1 = env.step(CodeFixAction(action="fix_syntax"))
+    assert obs1.done is False
+    assert 0.3 <= obs1.score < 1.0
+
+    obs2 = env.step(CodeFixAction(action="fix_logic"))
+    assert obs2.done is True
+    assert obs2.score >= 1.0
+
+
+def test_nightmare_task_converges():
+    env = CodeFixEnvironment()
+    env.reset(task="nightmare")
+
+    obs1 = env.step(CodeFixAction(action="fix_syntax"))
+    assert obs1.done is False
+
+    obs2 = env.step(CodeFixAction(action="fix_logic"))
+    assert obs2.done is True
+    assert obs2.score >= 1.0
+
+
+def test_medium_task_fix_logic():
+    env = CodeFixEnvironment()
+    env.reset(task="medium")
+    obs = env.step(CodeFixAction(action="fix_logic"))
+    assert obs.score >= 1.0
+    assert obs.done is True
+
+
+def test_invalid_action_returns_penalty():
+    env = CodeFixEnvironment()
+    env.reset(task="easy")
+    obs = env.step(CodeFixAction(action="unknown_action"))
+    assert obs.reward is not None
+    assert float(obs.reward) < 0

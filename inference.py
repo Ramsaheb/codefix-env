@@ -1,153 +1,293 @@
+"""
+Baseline inference script for CodeFixEnv.
+
+Uses the OpenAI client for LLM calls and interacts with the CodeFixEnv
+HTTP API (``/reset``, ``/step``) deployed on Hugging Face Spaces or locally.
+
+Environment variables (mandatory):
+    API_BASE_URL   – URL of the CodeFixEnv server (e.g. https://<space>.hf.space)
+    MODEL_NAME     – Model identifier for the LLM
+    HF_TOKEN       – Hugging Face / API key
+
+Emits structured stdout logs in [START], [STEP], [END] format as required
+by the hackathon evaluation harness.
+"""
+
+import asyncio
 import os
 import re
-import time
-from typing import Dict
+from typing import Any, Dict, List
 
+import httpx
 from openai import OpenAI
-import requests
 
+# ---------------------------------------------------------------------------
+# Configuration from environment variables
+# ---------------------------------------------------------------------------
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:7860").rstrip("/")
-MODEL_NAME = os.getenv("MODEL_NAME", "demo-rule-agent")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-TASK_NAME = os.getenv("TASK_NAME", "easy")
-MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
-USE_LLM_POLICY = os.getenv("USE_LLM_POLICY", "true").strip().lower() in {"1", "true", "yes"}
-MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
+API_BASE_URL: str = os.getenv("API_BASE_URL", "http://localhost:7860").rstrip("/")
+MODEL_NAME: str = os.getenv("MODEL_NAME", "demo-rule-agent")
+HF_TOKEN: str = os.getenv("HF_TOKEN", "")
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 
-SYSTEM_PROMPT = (
-    "You are a deterministic code-fixing policy. Return exactly one action and nothing else. "
-    "Allowed actions: fix_syntax, fix_logic, noop, replace_line:<line_no>:<new_code>, "
-    "append_line:<new_code>, delete_line:<line_no>, replace_text:<old_text>:<new_text>."
+TASKS: List[str] = [
+    t.strip()
+    for t in os.getenv("TASKS", "easy,medium,hard").split(",")
+    if t.strip()
+]
+MAX_STEPS: int = int(os.getenv("MAX_STEPS", "8"))
+TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0"))
+MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "40"))
+MAX_TOTAL_REWARD: float = float(os.getenv("MAX_TOTAL_REWARD", "1.0"))
+SUCCESS_SCORE_THRESHOLD: float = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "1.0"))
+
+BENCHMARK: str = "CodeFixEnv"
+
+# ---------------------------------------------------------------------------
+# System prompt for the LLM policy
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT: str = (
+    "You are a deterministic code-fixing policy. Return exactly one action "
+    "and nothing else.  Allowed actions: fix_syntax, fix_logic, noop, "
+    "replace_line:<line_no>:<new_code>, append_line:<new_code>, "
+    "delete_line:<line_no>, replace_text:<old_text>:<new_text>."
 )
 
-
-VALID_ACTION_PATTERN = re.compile(
-    r"^(fix_syntax|fix_logic|noop|replace_line:[^:\n]+:.+|append_line:.+|delete_line:[^:\n]+|replace_text:[^:\n]+:.+)$"
+VALID_ACTION_RE = re.compile(
+    r"^(fix_syntax|fix_logic|noop"
+    r"|replace_line:[^:\n]+:.+"
+    r"|append_line:.+"
+    r"|delete_line:[^:\n]+"
+    r"|replace_text:[^:\n]+:.+)$"
 )
 
+# ---------------------------------------------------------------------------
+# Deterministic fallback policy (no LLM needed)
+# ---------------------------------------------------------------------------
 
-def choose_action(state: Dict[str, object]) -> str:
-    """Deterministic fallback policy when LLM is unavailable."""
+
+def choose_action_fallback(state: Dict[str, Any]) -> str:
+    """Rule-based fallback when LLM is unavailable."""
     code = str(state.get("code", ""))
     error = str(state.get("error", ""))
 
     if "SyntaxError" in error or 'print("Hello' in code or "if a > b\n" in code:
         return "fix_syntax"
 
-    if (
-        "a-b" in code
-        or "a - b" in code
-        or "b-a" in code
-        or "b - a" in code
-        or "total = a - b" in code
-    ):
+    if any(tok in code for tok in ("a-b", "a - b", "b-a", "b - a")):
         return "fix_logic"
 
     return "noop"
 
 
-def _normalize_action(raw_action: str) -> str:
-    action = raw_action.strip().strip("`")
-    if VALID_ACTION_PATTERN.match(action):
-        return action
-
-    for line in raw_action.splitlines():
+def _normalise_llm_output(raw: str) -> str:
+    """Extract a valid action string from LLM output."""
+    cleaned = raw.strip().strip("`")
+    if VALID_ACTION_RE.match(cleaned):
+        return cleaned
+    for line in raw.splitlines():
         candidate = line.strip().strip("`")
-        if VALID_ACTION_PATTERN.match(candidate):
+        if VALID_ACTION_RE.match(candidate):
             return candidate
-
     return "noop"
 
 
-def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
-    prompt = (
+# ---------------------------------------------------------------------------
+# LLM policy via OpenAI client
+# ---------------------------------------------------------------------------
+
+
+def get_model_message(
+    client: OpenAI,
+    step: int,
+    state: Dict[str, Any],
+    history: List[str],
+) -> str:
+    """Call the LLM and return a single action string."""
+    user_prompt = (
         f"Task: {state.get('task', '')}\n"
         f"Error: {state.get('error', '')}\n"
-        f"Step count: {state.get('step_count', 0)}\n"
-        f"History: {state.get('history', [])}\n"
+        f"Step: {step}\n"
+        f"History: {history}\n"
         f"Code:\n{state.get('code', '')}\n\n"
         "Return exactly one valid action."
     )
-
-    for _ in range(max(1, MAX_LLM_RETRIES)):
+    try:
         completion = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_prompt},
             ],
-            temperature=0,
-            max_tokens=40,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            stream=False,
         )
-
-        content = completion.choices[0].message.content or ""
-        action = _normalize_action(content)
-        if action != "noop" or "noop" in content:
-            return action
-
-    return "noop"
+        text = (completion.choices[0].message.content or "").strip()
+        return _normalise_llm_output(text) if text else "noop"
+    except Exception as exc:
+        print(f"[DEBUG] Model request failed: {exc}", flush=True)
+        return choose_action_fallback(state)
 
 
-def main() -> None:
-    headers = {"Content-Type": "application/json"}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+# ---------------------------------------------------------------------------
+# Structured logging helpers
+# ---------------------------------------------------------------------------
 
-    client = None
-    if USE_LLM_POLICY and HF_TOKEN:
-        client = OpenAI(api_key=HF_TOKEN, base_url=LLM_BASE_URL)
-        print(f"Using OpenAI-compatible policy with model: {MODEL_NAME} @ {LLM_BASE_URL}")
-    else:
-        print("HF_TOKEN missing or LLM policy disabled; using deterministic fallback policy")
 
-    print(f"Starting inference against API: {API_BASE_URL} task={TASK_NAME} max_steps={MAX_STEPS}")
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
-    reset_resp = requests.post(
-        f"{API_BASE_URL}/reset",
-        json={"task": TASK_NAME},
-        headers=headers,
-        timeout=REQUEST_TIMEOUT,
+
+def log_step(
+    step: int,
+    action: str,
+    reward: float,
+    done: bool,
+    error: str | None,
+) -> None:
+    safe_err = (error or "").replace("\n", " ").strip()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.4f} "
+        f"done={done} error={safe_err}",
+        flush=True,
     )
-    reset_resp.raise_for_status()
 
-    reset_payload = reset_resp.json()
-    session_id = reset_payload["session_id"]
-    state = reset_payload["state"]
-    done = False
-    step = 0
 
-    while not done and step < MAX_STEPS:
-        if client is not None:
-            try:
-                action = choose_action_with_openai(client, state)
-            except Exception:
-                action = choose_action(state)
-        else:
-            action = choose_action(state)
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    print(
+        f"[END] success={success} steps={steps} score={score:.4f} "
+        f"rewards={rewards}",
+        flush=True,
+    )
 
-        step_resp = requests.post(
-            f"{API_BASE_URL}/step",
-            json={"session_id": session_id, "action": action},
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
-        step_resp.raise_for_status()
 
-        payload = step_resp.json()
-        state = payload["state"]
-        done = bool(payload["done"])
-        step += 1
+# ---------------------------------------------------------------------------
+# Environment interaction helpers (HTTP)
+# ---------------------------------------------------------------------------
 
-        print(
-            f"step={step} action={action} reward={payload['reward']} "
-            f"score={payload['score']} done={done}"
-        )
 
-        time.sleep(0.1)
+async def env_reset(
+    http: httpx.AsyncClient,
+    task: str,
+) -> Dict[str, Any]:
+    """POST /reset and return parsed JSON."""
+    resp = await http.post(f"{API_BASE_URL}/reset", json={"task": task}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def env_step(
+    http: httpx.AsyncClient,
+    action_str: str,
+) -> Dict[str, Any]:
+    """POST /step and return parsed JSON."""
+    resp = await http.post(
+        f"{API_BASE_URL}/step",
+        json={"action": {"action": action_str}},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Main inference loop
+# ---------------------------------------------------------------------------
+
+
+async def run_task(
+    task_name: str,
+    client: OpenAI | None,
+    http: httpx.AsyncClient,
+) -> tuple[float, int, bool]:
+    """Run one full episode for *task_name* and return (score, steps, success)."""
+
+    history: List[str] = []
+    rewards: List[float] = []
+    steps_taken: int = 0
+    score: float = 0.0
+    success: bool = False
+
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        reset_data = await env_reset(http, task_name)
+        obs = reset_data.get("observation", {})
+        done = reset_data.get("done", False)
+
+        for step in range(1, MAX_STEPS + 1):
+            if done:
+                break
+
+            # Choose action
+            if client is not None:
+                action_str = get_model_message(client, step, obs, history)
+            else:
+                action_str = choose_action_fallback(obs)
+
+            # Execute
+            step_data = await env_step(http, action_str)
+            obs = step_data.get("observation", {})
+            reward = float(step_data.get("reward", 0.0) or 0.0)
+            done = bool(step_data.get("done", False))
+
+            rewards.append(reward)
+            steps_taken = step
+            score = float(obs.get("score", 0.0))
+
+            log_step(
+                step=step,
+                action=action_str,
+                reward=reward,
+                done=done,
+                error=obs.get("error", ""),
+            )
+
+            history.append(f"Step {step}: {action_str!r} -> reward {reward:+.2f}")
+
+            if done:
+                break
+
+        # Final score normalisation
+        if MAX_TOTAL_REWARD > 0:
+            score = min(max(score, 0.0), 1.0)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+    return score, steps_taken, success
+
+
+async def main() -> None:
+    api_key = OPENAI_API_KEY or HF_TOKEN
+
+    # Build OpenAI client for LLM policy (if key available)
+    client: OpenAI | None = None
+    if api_key:
+        client = OpenAI(api_key=api_key, base_url=LLM_BASE_URL)
+
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    scores: List[float] = []
+
+    async with httpx.AsyncClient(headers=headers) as http:
+        for task_name in TASKS:
+            task_score, _, _ = await run_task(task_name, client, http)
+            scores.append(task_score)
+
+    aggregate = sum(scores) / len(scores) if scores else 0.0
+    aggregate = min(max(aggregate, 0.0), 1.0)
+    print(
+        f"[END] aggregate_score={aggregate:.4f} tasks={len(scores)}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

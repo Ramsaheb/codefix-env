@@ -1,3 +1,5 @@
+"""Test the anti-cheat detection in the grader."""
+
 from graders.grader import grade_code
 
 
