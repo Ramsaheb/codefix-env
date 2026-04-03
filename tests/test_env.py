@@ -51,6 +51,15 @@ def test_health_endpoint():
     assert data["status"] == "healthy"
 
 
+def test_root_endpoint():
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["name"] == "CodeFixEnv"
+    assert data["status"] == "ok"
+
+
 def test_reset_and_step_flow():
     client = TestClient(app)
 

@@ -41,6 +41,22 @@ app = create_app(
 )
 
 
+@app.get("/")
+def root() -> dict:
+    """Human-friendly root endpoint for browser checks on HF Spaces."""
+    return {
+        "name": "CodeFixEnv",
+        "status": "ok",
+        "docs": {
+            "health": "/health",
+            "schema": "/schema",
+            "reset": "/reset",
+            "step": "/step",
+            "state": "/state",
+        },
+    }
+
+
 def main():
     """Entry point for direct execution via `python -m server.app` or [project.scripts]."""
     import uvicorn
