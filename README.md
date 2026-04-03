@@ -1,3 +1,13 @@
+---
+title: CodeFixEnv
+emoji: "🤖"
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # CodeFixEnv
 
 An OpenEnv-compliant reinforcement learning environment for evaluating AI agents on **iterative Python code debugging**.
