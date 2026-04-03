@@ -148,7 +148,7 @@ def log_step(
     done: bool,
     error: str | None,
 ) -> None:
-    safe_err = (error or "").replace("\n", " ").strip()
+    safe_err = "None" if error in (None, "") else str(error).replace("\n", " ").strip()
     print(
         f"[STEP] step={step} action={action} reward={reward:.4f} "
         f"done={done} error={safe_err}",
@@ -243,7 +243,7 @@ async def run_task(
                 action=action_str,
                 reward=reward,
                 done=done,
-                error=obs.get("error", ""),
+                error=obs.get("error") or None,
             )
 
             history.append(f"Step {step}: {action_str!r} -> reward {reward:+.2f}")
@@ -270,23 +270,12 @@ async def main() -> None:
     if api_key:
         client = OpenAI(api_key=api_key, base_url=LLM_BASE_URL)
 
-    headers: Dict[str, str] = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
     scores: List[float] = []
 
-    async with httpx.AsyncClient(headers=headers) as http:
+    async with httpx.AsyncClient() as http:
         for task_name in TASKS:
             task_score, _, _ = await run_task(task_name, client, http)
             scores.append(task_score)
-
-    aggregate = sum(scores) / len(scores) if scores else 0.0
-    aggregate = min(max(aggregate, 0.0), 1.0)
-    print(
-        f"[END] aggregate_score={aggregate:.4f} tasks={len(scores)}",
-        flush=True,
-    )
 
 
 if __name__ == "__main__":

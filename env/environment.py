@@ -15,7 +15,7 @@ from typing import Any, Optional
 from openenv.core.env_server.interfaces import Environment
 
 from env.logic import apply_action
-from env.reward import compute_reward
+from env.reward import build_reward
 from graders.grader import grade_code
 from models import CodeFixAction, CodeFixObservation, CodeFixState
 from tasks.task_loader import load_task
@@ -100,13 +100,14 @@ class CodeFixEnvironment(Environment[CodeFixAction, CodeFixObservation, CodeFixS
 
         change = diff_summary(old_code, new_code)
         new_score, grade_error = grade_code(self._state.task_name, new_code)
-        reward = compute_reward(
+        reward_details = build_reward(
             previous_score=self._state.last_score,
             current_score=new_score,
             changed_lines=int(change["changed_lines"]),
             action_error=action_error,
             grade_error=grade_error,
         )
+        reward = reward_details.value
 
         self._state.code = new_code
         self._state.step_count += 1
@@ -134,6 +135,7 @@ class CodeFixEnvironment(Environment[CodeFixAction, CodeFixObservation, CodeFixS
                 "changed_lines": change["changed_lines"],
                 "action_error": action_error,
                 "grade_error": grade_error,
+                "reward": reward_details.model_dump(),
             },
         )
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
 from openenv.core.env_server.types import Action, Observation, State
 
 
@@ -33,8 +34,20 @@ class CodeFixObservation(Observation):
     code: str = ""
     error: str = ""
     step_count: int = 0
-    history: List[str] = []
+    history: List[str] = Field(default_factory=list)
     score: float = 0.0
+
+
+class CodeFixReward(BaseModel):
+    """Typed reward details for a single transition."""
+
+    value: float = 0.0
+    previous_score: float = 0.0
+    current_score: float = 0.0
+    delta: float = 0.0
+    changed_lines: int = 0
+    action_error: str = ""
+    grade_error: str = ""
 
 
 class CodeFixState(State):
@@ -52,4 +65,4 @@ class CodeFixState(State):
     max_steps: int = 6
     target_hint: str = ""
     last_score: float = 0.0
-    history: List[str] = []
+    history: List[str] = Field(default_factory=list)
