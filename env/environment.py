@@ -45,6 +45,7 @@ class CodeFixEnv:
             action_error=action_error,
             grade_error=grade_error,
         )
+        reward = max(0.0, min(reward, 1.0))
 
         self.state.code = new_code
         self.state.step_count += 1

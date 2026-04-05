@@ -123,4 +123,4 @@ def test_environment_exposes_action_error_in_step_info():
     _obs, reward, _done, info = demo_env.step("unknown_action")
 
     assert info["action_error"]
-    assert reward <= -0.1
+    assert reward == 0.0
