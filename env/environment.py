@@ -2,7 +2,7 @@ from typing import Optional, Tuple
 
 from env.logic import apply_action
 from env.reward import compute_reward
-from env.state import CodeState
+from env.state import CodeState, PUBLIC_SCORE_EPSILON
 from graders.grader import grade_code
 from tasks.task_loader import load_task
 from utils.diff_utils import diff_summary
@@ -53,7 +53,7 @@ class CodeFixEnv:
         self.state.last_score = new_score
         self.state.error = action_error or grade_error
 
-        done = new_score >= 1.0 or self.state.step_count >= self.state.max_steps
+        done = new_score >= (1.0 - PUBLIC_SCORE_EPSILON) or self.state.step_count >= self.state.max_steps
 
         log(
             f"task={self.state.task_name} step={self.state.step_count} "

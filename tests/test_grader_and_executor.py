@@ -45,7 +45,7 @@ def test_grade_code_handles_syntax_error_and_runtime_error():
     syntax_score, syntax_error = grader.grade_code("easy", 'print("oops')
     runtime_score, runtime_error = grader.grade_code("easy", "raise RuntimeError('x')")
 
-    assert syntax_score == 0.0
+    assert syntax_score == 0.001
     assert "SyntaxError" in syntax_error
     assert runtime_score == 0.3
     assert "RuntimeError" in runtime_error
@@ -57,14 +57,14 @@ def test_grade_code_returns_full_score_when_no_testcases(monkeypatch):
 
     score, error = grader.grade_code("custom", "x = 1")
 
-    assert score == 1.0
+    assert score == 0.999
     assert error == ""
 
 
 def test_grade_code_rejects_unknown_task_name():
     score, error = grader.grade_code("not-a-real-task", "print('ok')")
 
-    assert score == 0.0
+    assert score == 0.001
     assert "Unknown task" in error
 
 

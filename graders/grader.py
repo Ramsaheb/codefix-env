@@ -9,21 +9,30 @@ from utils.code_executor import (
 )
 
 
+SCORE_EPSILON = 0.001
+MAX_TASK_SCORE = 1.0 - SCORE_EPSILON
+
+
+def _bounded_score(raw_score: float) -> float:
+    bounded = min(max(float(raw_score), SCORE_EPSILON), MAX_TASK_SCORE)
+    return round(bounded, 3)
+
+
 def grade_code(task_name: str, code: str) -> Tuple[float, str]:
     if task_name not in TEST_CASES:
-        return 0.0, f"Unknown task '{task_name}'."
+        return _bounded_score(0.0), f"Unknown task '{task_name}'."
 
     syntax_ok, syntax_error = compile_code(code)
     if not syntax_ok:
-        return 0.0, syntax_error
+        return _bounded_score(0.0), syntax_error
 
     run_ok, namespace, run_error = execute_code(code)
     if not run_ok:
-        return 0.3, run_error
+        return _bounded_score(0.3), run_error
 
     testcases = get_testcases(task_name)
     if not testcases:
-        return 1.0, ""
+        return _bounded_score(1.0), ""
 
     passed = 0
     failures = []
@@ -35,12 +44,11 @@ def grade_code(task_name: str, code: str) -> Tuple[float, str]:
         else:
             failures.append(fail_reason)
 
-    score = 0.3 + (0.7 * (passed / len(testcases)))
-    score = round(min(score, 1.0), 3)
+    score = _bounded_score(0.3 + (0.7 * (passed / len(testcases))))
 
     anti_cheat_error = _detect_hardcoded_solution(code, testcases)
     if anti_cheat_error:
-        score = min(score, 0.2)
+        score = _bounded_score(min(score, 0.2))
         failures.append(anti_cheat_error)
 
     return score, "; ".join(failures)

@@ -18,7 +18,8 @@ MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
 USE_LLM_POLICY = os.getenv("USE_LLM_POLICY", "true").strip().lower() in {"1", "true", "yes"}
 MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
-SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "1.0"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.999"))
+SUCCESS_SCORE_THRESHOLD = min(max(SUCCESS_SCORE_THRESHOLD, 0.001), 0.999)
 
 SYSTEM_PROMPT = (
     "You are a deterministic code-fixing policy. Return exactly one action and nothing else. "

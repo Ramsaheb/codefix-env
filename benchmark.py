@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import List
 
 from env.environment import CodeFixEnv
+from env.state import PUBLIC_SCORE_EPSILON
 from tasks.task_loader import available_tasks
 
 
@@ -57,7 +58,7 @@ def run_task_benchmark(task_name: str) -> BenchmarkResult:
             break
 
     score = float(state.get("score", 0.0))
-    solved = score >= 1.0
+    solved = score >= (1.0 - PUBLIC_SCORE_EPSILON)
     return BenchmarkResult(
         task=task_name,
         solved=solved,
