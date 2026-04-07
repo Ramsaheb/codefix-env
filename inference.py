@@ -1,25 +1,44 @@
+"""
+inference.py — OpenEnv Hackathon inference script for CodeFixEnv.
+
+Environment variables:
+    API_BASE_URL   The API endpoint for the LLM.
+    MODEL_NAME     The model identifier to use for inference.
+    HF_TOKEN       Your Hugging Face / API key.
+    ENV_API_BASE_URL  The environment server URL (default: http://localhost:7860).
+
+STDOUT FORMAT:
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
+"""
+
 import os
 import re
+import sys
 import time
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from openai import OpenAI
 import requests
 
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:7860").rstrip("/")
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1").rstrip("/")
 ENV_API_BASE_URL = os.getenv("ENV_API_BASE_URL", "http://localhost:7860").rstrip("/")
-MODEL_NAME = os.getenv("MODEL_NAME", "demo-rule-agent")
-API_KEY = os.getenv("API_KEY", "")
-TASK_NAME = os.getenv("TASK_NAME", "easy")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY", "")
 BENCHMARK = os.getenv("BENCHMARK", "codefix-env")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
 USE_LLM_POLICY = os.getenv("USE_LLM_POLICY", "true").strip().lower() in {"1", "true", "yes"}
 MAX_LLM_RETRIES = int(os.getenv("MAX_LLM_RETRIES", "2"))
-SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.999"))
-SUCCESS_SCORE_THRESHOLD = min(max(SUCCESS_SCORE_THRESHOLD, 0.001), 0.999)
+
+# All tasks to evaluate — at least 3 required by the validator
+ALL_TASKS: List[str] = ["easy", "medium", "hard", "expert", "nightmare"]
 
 SYSTEM_PROMPT = (
     "You are a deterministic code-fixing policy. Return exactly one action and nothing else. "
@@ -29,12 +48,22 @@ SYSTEM_PROMPT = (
     "rewrite_code:<new_code>."
 )
 
-
 VALID_ACTION_PATTERN = re.compile(
     r"^(fix_syntax|fix_logic|noop|replace_line:[^:\n]+:.+|insert_line:[^:\n]+:.+|replace_range:[^:\n]+:[^:\n]+:[\s\S]*|append_line:.+|delete_line:[^:\n]+|replace_text:[^:\n]+:.+|rewrite_code:[\s\S]+)$"
 )
 
 
+# ---------------------------------------------------------------------------
+# Score clamping — scores must be strictly in (0, 1)
+# ---------------------------------------------------------------------------
+def _clamp_score(score: float) -> float:
+    """Clamp score to strictly (0, 1) — never exactly 0.0 or 1.0."""
+    return round(min(max(float(score), 0.01), 0.99), 4)
+
+
+# ---------------------------------------------------------------------------
+# Deterministic fallback policy
+# ---------------------------------------------------------------------------
 def choose_action(state: Dict[str, object]) -> str:
     """Deterministic fallback policy when LLM is unavailable."""
     code = str(state.get("code", ""))
@@ -55,6 +84,9 @@ def choose_action(state: Dict[str, object]) -> str:
     return "noop"
 
 
+# ---------------------------------------------------------------------------
+# Action normalisation
+# ---------------------------------------------------------------------------
 def _normalize_action(raw_action: str) -> str:
     action = raw_action.strip().strip("`")
     if VALID_ACTION_PATTERN.match(action):
@@ -80,6 +112,9 @@ def _has_explicit_noop(raw_action: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Logging helpers — strict stdout format
+# ---------------------------------------------------------------------------
 def _safe_field(value: object) -> str:
     return str(value).replace("\r", "\\r").replace("\n", "\\n")
 
@@ -97,10 +132,12 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
     )
 
 
-def log_end(success: bool, steps: int, rewards: list[float]) -> None:
-    rewards_text = ",".join(f"{reward:.2f}" for reward in rewards)
+def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    """Emit the [END] line including the mandatory score= field."""
+    score = _clamp_score(score)
+    rewards_text = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} rewards={rewards_text}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.4f} rewards={rewards_text}",
         flush=True,
     )
 
@@ -109,6 +146,9 @@ def log_error(message: str) -> None:
     print(f"[ERROR] {message}", flush=True)
 
 
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
 def _build_endpoint_candidates(base_url: str) -> tuple[list[str], list[str]]:
     base = base_url.rstrip("/")
 
@@ -157,6 +197,9 @@ def _post_with_fallback(
     raise RuntimeError("No API endpoint candidates were available for request")
 
 
+# ---------------------------------------------------------------------------
+# LLM policy
+# ---------------------------------------------------------------------------
 def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
     prompt = (
         f"Task: {state.get('task', '')}\n"
@@ -189,39 +232,46 @@ def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
     return "noop"
 
 
-def main() -> None:
-    headers = {"Content-Type": "application/json"}
-
-    client = None
-    if USE_LLM_POLICY and API_BASE_URL and API_KEY:
-        # Hackathon Phase-2 expects LLM traffic via injected LiteLLM proxy credentials.
-        client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+# ---------------------------------------------------------------------------
+# Single-task runner
+# ---------------------------------------------------------------------------
+def run_single_task(
+    task_name: str,
+    reset_urls: list[str],
+    step_urls: list[str],
+    headers: Dict[str, str],
+    client: Optional[OpenAI],
+) -> None:
+    """Run one task, emitting [START] / [STEP]* / [END] to stdout."""
     rewards: list[float] = []
     steps_taken = 0
     success = False
-    reset_urls, step_urls = _build_endpoint_candidates(ENV_API_BASE_URL)
+    score = 0.001  # default — strictly > 0
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
         reset_resp, selected_reset_url = _post_with_fallback(
             reset_urls,
-            json_payload={"task": TASK_NAME},
+            json_payload={"task": task_name},
             headers=headers,
             timeout=REQUEST_TIMEOUT,
         )
 
         if selected_reset_url.endswith("/reset"):
             selected_step_url = f"{selected_reset_url[: -len('/reset')]}/step"
-            if selected_step_url in step_urls:
-                step_urls.remove(selected_step_url)
-            step_urls.insert(0, selected_step_url)
+            local_step_urls = list(step_urls)
+            if selected_step_url in local_step_urls:
+                local_step_urls.remove(selected_step_url)
+            local_step_urls.insert(0, selected_step_url)
+        else:
+            local_step_urls = list(step_urls)
 
         reset_payload = reset_resp.json()
         session_id = reset_payload["session_id"]
         state = reset_payload["state"]
         done = False
-        score = float(state.get("score", 0.0))
+        score = _clamp_score(float(state.get("score", 0.001)))
 
         while not done and steps_taken < MAX_STEPS:
             if client is not None:
@@ -233,7 +283,7 @@ def main() -> None:
                 action = choose_action(state)
 
             step_resp, _selected_step_url = _post_with_fallback(
-                step_urls,
+                local_step_urls,
                 json_payload={"session_id": session_id, "action": action},
                 headers=headers,
                 timeout=REQUEST_TIMEOUT,
@@ -243,7 +293,7 @@ def main() -> None:
             state = payload["state"]
             done = bool(payload["done"])
             reward = float(payload.get("reward", 0.0))
-            score = float(payload.get("score", score))
+            score = _clamp_score(float(payload.get("score", score)))
             steps_taken += 1
             rewards.append(reward)
 
@@ -258,12 +308,35 @@ def main() -> None:
 
             time.sleep(0.1)
 
-        success = bool(done and score >= SUCCESS_SCORE_THRESHOLD)
+        success = bool(done and score >= 0.99)
+
     except Exception as exc:
         success = False
         log_error(f"inference_failed={exc.__class__.__name__}: {exc}")
     finally:
-        log_end(success=success, steps=steps_taken, rewards=rewards)
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+
+# ---------------------------------------------------------------------------
+# Main — iterate over ALL tasks
+# ---------------------------------------------------------------------------
+def main() -> None:
+    headers = {"Content-Type": "application/json"}
+
+    client = None
+    if USE_LLM_POLICY and API_BASE_URL and API_KEY:
+        client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
+
+    reset_urls, step_urls = _build_endpoint_candidates(ENV_API_BASE_URL)
+
+    for task_name in ALL_TASKS:
+        run_single_task(
+            task_name=task_name,
+            reset_urls=reset_urls,
+            step_urls=step_urls,
+            headers=headers,
+            client=client,
+        )
 
 
 if __name__ == "__main__":

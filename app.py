@@ -4,6 +4,7 @@ from fastapi import Body, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 
 from env.session_manager import SessionManager, SessionNotFoundError
+from env.state import to_public_score
 from models.request_models import ResetRequest, StepRequest
 from models.response_models import MetadataResponse, Observation, ResetResponse, SchemaResponse, StateResponse, StepResponse
 from settings import load_settings
@@ -132,7 +133,7 @@ def step(req: StepRequest):
         "state": obs,
         "reward": reward,
         "done": done,
-        "score": obs.get("score", 0.001),
+        "score": to_public_score(obs.get("score", 0.001)),
     }
 
 
