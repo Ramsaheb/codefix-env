@@ -104,6 +104,58 @@ def log_end(success: bool, steps: int, rewards: list[float]) -> None:
     )
 
 
+def log_error(message: str) -> None:
+    print(f"[ERROR] {message}", flush=True)
+
+
+def _build_endpoint_candidates(base_url: str) -> tuple[list[str], list[str]]:
+    base = base_url.rstrip("/")
+
+    reset_candidates: list[str] = []
+    step_candidates: list[str] = []
+
+    if base.endswith("/reset"):
+        root = base[: -len("/reset")]
+        reset_candidates.append(base)
+        step_candidates.append(f"{root}/step")
+    elif base.endswith("/step"):
+        root = base[: -len("/step")]
+        step_candidates.append(base)
+        reset_candidates.append(f"{root}/reset")
+    else:
+        reset_candidates.extend([f"{base}/reset", f"{base}/api/reset"])
+        step_candidates.extend([f"{base}/step", f"{base}/api/step"])
+
+    return reset_candidates, step_candidates
+
+
+def _post_with_fallback(
+    urls: list[str],
+    *,
+    json_payload: Dict[str, object],
+    headers: Dict[str, str],
+    timeout: int,
+) -> tuple[requests.Response, str]:
+    last_error: Optional[Exception] = None
+
+    for url in urls:
+        try:
+            response = requests.post(url, json=json_payload, headers=headers, timeout=timeout)
+            if response.status_code == 404:
+                last_error = requests.HTTPError(f"404 for url: {url}")
+                continue
+
+            response.raise_for_status()
+            return response, url
+        except Exception as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError("No API endpoint candidates were available for request")
+
+
 def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
     prompt = (
         f"Task: {state.get('task', '')}\n"
@@ -147,17 +199,23 @@ def main() -> None:
     rewards: list[float] = []
     steps_taken = 0
     success = False
+    reset_urls, step_urls = _build_endpoint_candidates(API_BASE_URL)
 
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        reset_resp = requests.post(
-            f"{API_BASE_URL}/reset",
-            json={"task": TASK_NAME},
+        reset_resp, selected_reset_url = _post_with_fallback(
+            reset_urls,
+            json_payload={"task": TASK_NAME},
             headers=headers,
             timeout=REQUEST_TIMEOUT,
         )
-        reset_resp.raise_for_status()
+
+        if selected_reset_url.endswith("/reset"):
+            selected_step_url = f"{selected_reset_url[: -len('/reset')]}/step"
+            if selected_step_url in step_urls:
+                step_urls.remove(selected_step_url)
+            step_urls.insert(0, selected_step_url)
 
         reset_payload = reset_resp.json()
         session_id = reset_payload["session_id"]
@@ -174,13 +232,12 @@ def main() -> None:
             else:
                 action = choose_action(state)
 
-            step_resp = requests.post(
-                f"{API_BASE_URL}/step",
-                json={"session_id": session_id, "action": action},
+            step_resp, _selected_step_url = _post_with_fallback(
+                step_urls,
+                json_payload={"session_id": session_id, "action": action},
                 headers=headers,
                 timeout=REQUEST_TIMEOUT,
             )
-            step_resp.raise_for_status()
 
             payload = step_resp.json()
             state = payload["state"]
@@ -202,9 +259,9 @@ def main() -> None:
             time.sleep(0.1)
 
         success = bool(done and score >= SUCCESS_SCORE_THRESHOLD)
-    except Exception:
+    except Exception as exc:
         success = False
-        raise
+        log_error(f"inference_failed={exc.__class__.__name__}: {exc}")
     finally:
         log_end(success=success, steps=steps_taken, rewards=rewards)
 
