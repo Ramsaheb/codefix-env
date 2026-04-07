@@ -8,9 +8,9 @@ import requests
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:7860").rstrip("/")
+ENV_API_BASE_URL = os.getenv("ENV_API_BASE_URL", "http://localhost:7860").rstrip("/")
 MODEL_NAME = os.getenv("MODEL_NAME", "demo-rule-agent")
-HF_TOKEN = os.getenv("HF_TOKEN", "")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+API_KEY = os.getenv("API_KEY", "")
 TASK_NAME = os.getenv("TASK_NAME", "easy")
 BENCHMARK = os.getenv("BENCHMARK", "codefix-env")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
@@ -190,16 +190,15 @@ def choose_action_with_openai(client: OpenAI, state: Dict[str, object]) -> str:
 
 def main() -> None:
     headers = {"Content-Type": "application/json"}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
 
     client = None
-    if USE_LLM_POLICY and HF_TOKEN:
-        client = OpenAI(api_key=HF_TOKEN, base_url=LLM_BASE_URL)
+    if USE_LLM_POLICY and API_BASE_URL and API_KEY:
+        # Hackathon Phase-2 expects LLM traffic via injected LiteLLM proxy credentials.
+        client = OpenAI(api_key=API_KEY, base_url=API_BASE_URL)
     rewards: list[float] = []
     steps_taken = 0
     success = False
-    reset_urls, step_urls = _build_endpoint_candidates(API_BASE_URL)
+    reset_urls, step_urls = _build_endpoint_candidates(ENV_API_BASE_URL)
 
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 

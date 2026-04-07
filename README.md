@@ -283,10 +283,10 @@ Current implementation:
 - interacts with API via /reset and /step
 
 Environment variables used:
-- API_BASE_URL
+- API_BASE_URL (LiteLLM proxy base URL for OpenAI client)
+- API_KEY (LiteLLM proxy key for OpenAI client)
+- ENV_API_BASE_URL (environment API base URL for /reset and /step)
 - MODEL_NAME
-- HF_TOKEN
-- LLM_BASE_URL
 - USE_LLM_POLICY
 - TASK_NAME
 - MAX_STEPS
@@ -324,10 +324,10 @@ Steps:
 4. Deploy and verify health.
 
 Recommended variables/secrets:
-- HF_TOKEN (secret)
+- API_KEY (secret)
 - MODEL_NAME
-- API_BASE_URL (if needed by external runner)
-- LLM_BASE_URL (if using compatible endpoint)
+- API_BASE_URL (injected LiteLLM proxy URL)
+- ENV_API_BASE_URL (optional; defaults to http://localhost:7860)
 
 Post-deploy checks:
 - GET /health responds

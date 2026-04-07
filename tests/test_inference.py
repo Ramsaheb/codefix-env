@@ -91,11 +91,11 @@ def test_choose_action_with_openai_accepts_explicit_noop(monkeypatch):
 
 
 def test_main_runs_fallback_policy_end_to_end(monkeypatch):
-    monkeypatch.setattr(inference, "API_BASE_URL", "http://fake-api")
+    monkeypatch.setattr(inference, "ENV_API_BASE_URL", "http://fake-api")
     monkeypatch.setattr(inference, "REQUEST_TIMEOUT", 3)
     monkeypatch.setattr(inference, "MAX_STEPS", 5)
     monkeypatch.setattr(inference, "USE_LLM_POLICY", False)
-    monkeypatch.setattr(inference, "HF_TOKEN", "")
+    monkeypatch.setattr(inference, "API_KEY", "")
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(inference, "choose_action", lambda _state: "fix_syntax")
 
@@ -162,16 +162,22 @@ def test_main_runs_fallback_policy_end_to_end(monkeypatch):
 
 
 def test_main_falls_back_when_llm_policy_raises(monkeypatch):
-    monkeypatch.setattr(inference, "API_BASE_URL", "http://fake-api")
+    monkeypatch.setattr(inference, "ENV_API_BASE_URL", "http://fake-api")
+    monkeypatch.setattr(inference, "API_BASE_URL", "https://litellm-proxy.example/v1")
     monkeypatch.setattr(inference, "REQUEST_TIMEOUT", 3)
     monkeypatch.setattr(inference, "MAX_STEPS", 2)
     monkeypatch.setattr(inference, "USE_LLM_POLICY", True)
-    monkeypatch.setattr(inference, "HF_TOKEN", "token")
+    monkeypatch.setattr(inference, "API_KEY", "token")
     monkeypatch.setattr(inference, "MODEL_NAME", "demo")
-    monkeypatch.setattr(inference, "LLM_BASE_URL", "http://llm")
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
 
-    monkeypatch.setattr(inference, "OpenAI", lambda **_kwargs: object())
+    openai_kwargs = {}
+
+    def fake_openai(**kwargs):
+        openai_kwargs.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(inference, "OpenAI", fake_openai)
     monkeypatch.setattr(
         inference,
         "choose_action_with_openai",
@@ -188,7 +194,7 @@ def test_main_falls_back_when_llm_policy_raises(monkeypatch):
 
     def fake_post(url, json, headers, timeout):
         if url.endswith("/reset"):
-            assert headers.get("Authorization") == "Bearer token"
+            assert headers == {"Content-Type": "application/json"}
             return FakeResponse(
                 {
                     "session_id": "sid-2",
@@ -227,18 +233,22 @@ def test_main_falls_back_when_llm_policy_raises(monkeypatch):
 
     inference.main()
 
+    assert openai_kwargs == {
+        "api_key": "token",
+        "base_url": "https://litellm-proxy.example/v1",
+    }
     assert fallback_calls["count"] == 1
 
 
 def test_main_emits_hackathon_stdout_format(monkeypatch, capsys):
-    monkeypatch.setattr(inference, "API_BASE_URL", "http://fake-api")
+    monkeypatch.setattr(inference, "ENV_API_BASE_URL", "http://fake-api")
     monkeypatch.setattr(inference, "TASK_NAME", "easy")
     monkeypatch.setattr(inference, "BENCHMARK", "codefix-env")
     monkeypatch.setattr(inference, "MODEL_NAME", "demo-model")
     monkeypatch.setattr(inference, "REQUEST_TIMEOUT", 3)
     monkeypatch.setattr(inference, "MAX_STEPS", 3)
     monkeypatch.setattr(inference, "USE_LLM_POLICY", False)
-    monkeypatch.setattr(inference, "HF_TOKEN", "")
+    monkeypatch.setattr(inference, "API_KEY", "")
     monkeypatch.setattr(inference, "SUCCESS_SCORE_THRESHOLD", 1.0)
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(inference, "choose_action", lambda _state: "fix_syntax")
