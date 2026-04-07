@@ -15,7 +15,6 @@ STDOUT FORMAT:
 
 import os
 import re
-import sys
 import time
 from typing import Dict, List, Optional
 
