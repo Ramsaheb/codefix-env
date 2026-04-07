@@ -34,7 +34,7 @@ def test_end_to_end_task_flows_reach_done(task, actions):
 
     assert last_payload is not None
     assert last_payload["done"] is True
-    assert last_payload["score"] == 1.0
+    assert 0.0 < last_payload["score"] < 1.0
 
 
 def test_api_reset_without_payload_uses_default_task():

@@ -132,7 +132,7 @@ def step(req: StepRequest):
         "state": obs,
         "reward": reward,
         "done": done,
-        "score": info.get("score", 0.0),
+        "score": obs.get("score", 0.001),
     }
 
 

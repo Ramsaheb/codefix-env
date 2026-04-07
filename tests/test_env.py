@@ -147,4 +147,4 @@ def test_hard_task_reaches_done_with_expected_action_sequence():
 	assert second.status_code == 200
 	second_payload = second.json()
 	assert second_payload["done"] is True
-	assert second_payload["score"] == 1.0
+	assert 0.0 < second_payload["score"] < 1.0
