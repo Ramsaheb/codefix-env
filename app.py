@@ -1,7 +1,9 @@
 from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+import os
 
 from env.session_manager import SessionManager, SessionNotFoundError
 from env.state import to_public_score
@@ -40,16 +42,13 @@ def health():
     }
 
 
-@app.get("/")
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/", response_class=FileResponse)
 def root():
-    return {
-        "message": "CodeFixEnv API is running.",
-        "docs": "/docs",
-        "health": "/health",
-        "ready": "/ready",
-        "schema": "/schema",
-        "metadata": "/metadata",
-    }
+    return FileResponse(os.path.join(static_dir, "index.html"))
 
 
 @app.get("/ready")

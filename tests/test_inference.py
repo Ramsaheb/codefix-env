@@ -96,6 +96,7 @@ def test_main_runs_fallback_policy_end_to_end(monkeypatch):
     monkeypatch.setattr(inference, "MAX_STEPS", 5)
     monkeypatch.setattr(inference, "USE_LLM_POLICY", False)
     monkeypatch.setattr(inference, "API_KEY", "")
+    monkeypatch.setattr(inference, "ALL_TASKS", ["easy"])
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(inference, "choose_action", lambda _state: "fix_syntax")
 
@@ -169,6 +170,7 @@ def test_main_falls_back_when_llm_policy_raises(monkeypatch):
     monkeypatch.setattr(inference, "USE_LLM_POLICY", True)
     monkeypatch.setattr(inference, "API_KEY", "token")
     monkeypatch.setattr(inference, "MODEL_NAME", "demo")
+    monkeypatch.setattr(inference, "ALL_TASKS", ["easy"])
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
 
     openai_kwargs = {}
@@ -242,14 +244,13 @@ def test_main_falls_back_when_llm_policy_raises(monkeypatch):
 
 def test_main_emits_hackathon_stdout_format(monkeypatch, capsys):
     monkeypatch.setattr(inference, "ENV_API_BASE_URL", "http://fake-api")
-    monkeypatch.setattr(inference, "TASK_NAME", "easy")
+    monkeypatch.setattr(inference, "ALL_TASKS", ["easy"])
     monkeypatch.setattr(inference, "BENCHMARK", "codefix-env")
     monkeypatch.setattr(inference, "MODEL_NAME", "demo-model")
     monkeypatch.setattr(inference, "REQUEST_TIMEOUT", 3)
     monkeypatch.setattr(inference, "MAX_STEPS", 3)
     monkeypatch.setattr(inference, "USE_LLM_POLICY", False)
     monkeypatch.setattr(inference, "API_KEY", "")
-    monkeypatch.setattr(inference, "SUCCESS_SCORE_THRESHOLD", 1.0)
     monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(inference, "choose_action", lambda _state: "fix_syntax")
 
